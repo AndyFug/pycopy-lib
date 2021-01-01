@@ -24,26 +24,34 @@ class PollEventLoop(EventLoop):
         EventLoop.__init__(self, runq_len, waitq_len)
         self.poller = select.poll()
 
+        # Reverting to object map method because select.poll() 'userdata' feature doesn't work on ESP32/8266
+        self.objmap = {}
+
     def add_reader(self, sock, cb, *args):
         if DEBUG and __debug__:
             log.debug("add_reader%s", (sock, cb, args))
         if args:
-            self.poller.register(sock, select.POLLIN, (cb, args))
+            self.poller.register(sock, select.POLLIN)
+            self.objmap[id(sock)] = (cb, args)
         else:
-            self.poller.register(sock, select.POLLIN, cb)
+            self.poller.register(sock, select.POLLIN)
+            self.objmap[id(sock)] = cb
 
     def remove_reader(self, sock):
         if DEBUG and __debug__:
             log.debug("remove_reader(%s)", sock)
+        self.objmap.pop(id(sock), None)
         self.poller.unregister(sock, False)
 
     def add_writer(self, sock, cb, *args):
         if DEBUG and __debug__:
             log.debug("add_writer%s", (sock, cb, args))
         if args:
-            self.poller.register(sock, select.POLLOUT, (cb, args))
+            self.poller.register(sock, select.POLLOUT)
+            self.objmap[id(sock)] = (cb, args)
         else:
-            self.poller.register(sock, select.POLLOUT, cb)
+            self.poller.register(sock, select.POLLOUT)
+            self.objmap[id(sock)] = cb
 
     def remove_writer(self, sock):
         if DEBUG and __debug__:
@@ -52,6 +60,7 @@ class PollEventLoop(EventLoop):
         # and if that succeeds, yield IOWrite may never be called
         # for that socket, and it will never be added to poller. So,
         # ignore such error.
+        self.objmap.pop(id(sock), None)
         self.poller.unregister(sock, False)
 
     def cancel_io(self, sock):
@@ -72,7 +81,9 @@ class PollEventLoop(EventLoop):
         # We need one-shot behavior (second arg of 1 to .poll())
         res = self.poller.ipoll(delay, 1)
         #log.debug("poll result: %s", res)
-        for sock, ev, cb in res:
+        for sock, ev, usr in res:
+            del usr
+            cb = self.objmap[id(sock)]
             if ev & (select.POLLHUP | select.POLLERR):
                 # These events are returned even if not requested, and
                 # are sticky, i.e. will be returned again and again.
