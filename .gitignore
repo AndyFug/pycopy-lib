@@ -6,3 +6,6 @@ __pycache__
 *.org
 *.1
 setup.py
+
+#AF additions
+.idea
